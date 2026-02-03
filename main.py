@@ -1,17 +1,14 @@
 import logging
 import asyncio
+import sys
 from datetime import datetime
 from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder, 
-    CommandHandler, 
-    MessageHandler, 
-    CallbackQueryHandler, 
-    filters, 
-    ContextTypes
+    ApplicationBuilder, CommandHandler, MessageHandler, 
+    CallbackQueryHandler, filters, ContextTypes
 )
 
-# নিশ্চিত করুন এই মডিউলগুলো আপনার প্রজেক্টে আছে
+# Custom modules
 from database import db
 from ui import UI
 import utils
@@ -22,14 +19,12 @@ ADMIN_ID = 7832264582
 FS_CHANNEL = "@rifatsbotz" 
 # =================================================
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 
 async def is_maint():
     try:
         res = await db.query("SELECT value FROM settings WHERE key='maintenance'", fetchone=True)
-        return res['value'] == "1" if res else False
+        return res and res.get('value') == "1"
     except:
         return False
 
@@ -37,22 +32,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user: return
 
-    # Register User
     await db.query(
         "INSERT OR IGNORE INTO users (user_id, first_name, username, join_date) VALUES (?,?,?,?)", 
         (user.id, user.first_name, user.username, datetime.now().isoformat()), 
         commit=True
     )
     
-    # Maintenance Check
     if await is_maint() and user.id != ADMIN_ID:
         await update.message.reply_text("🚧 *Bot is under maintenance.*", parse_mode='Markdown')
         return
 
-    # Deep Link Handling
     if context.args:
         if not await utils.force_join(context.bot, user.id, FS_CHANNEL):
-            await update.message.reply_text(f"❌ Join {FS_CHANNEL} first!", parse_mode='Markdown')
+            await update.message.reply_text(f"❌ Join {FS_CHANNEL} first to access the file!")
             return
 
         file = await db.query("SELECT * FROM files WHERE file_code=?", (context.args[0],), fetchone=True)
@@ -82,7 +74,7 @@ async def handle_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(txt, reply_markup=kb, parse_mode='Markdown')
 
     elif data == "nav_upload":
-        await query.edit_message_text("📤 *Send the file now.*", reply_markup=UI.back_kb(), parse_mode='Markdown')
+        await query.edit_message_text("📤 *Send the file now (Photo/Video/Doc).* \n_Up to 2GB._", reply_markup=UI.back_kb(), parse_mode='Markdown')
         context.user_data['state'] = 'upload'
 
     elif data.startswith("nav_myfiles_"):
@@ -101,58 +93,51 @@ async def handle_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(txt, reply_markup=kb, parse_mode='Markdown')
 
     elif data == "nav_premium":
-        await query.edit_message_text("⭐ *Enter Prime Pass Key:*", reply_markup=UI.back_kb(), parse_mode='Markdown')
+        await query.edit_message_text("⭐ *Enter Your Prime Pass Key:*", reply_markup=UI.back_kb(), parse_mode='Markdown')
         context.user_data['state'] = 'redeem'
 
     elif data == "adm_stats" and user_id == ADMIN_ID:
         u = (await db.query("SELECT COUNT(*) as c FROM users", fetchone=True))['c']
         f = (await db.query("SELECT COUNT(*) as c FROM files", fetchone=True))['c']
-        await query.answer(f"Users: {u}\nFiles: {f}", show_alert=True)
+        await query.answer(f"Users: {u} | Files: {f}", show_alert=True)
 
     elif data == "adm_gen" and user_id == ADMIN_ID:
         key = utils.gen_prime_key()
         await db.query("INSERT INTO prime_passes (pass_key) VALUES (?)", (key,), commit=True)
-        await query.edit_message_text(f"✅ Key: `{key}`", reply_markup=UI.admin_panel(), parse_mode='Markdown')
+        adm_text, adm_kb = UI.admin_panel()
+        await query.edit_message_text(f"✅ *Key:* `{key}`\n\n{adm_text}", reply_markup=adm_kb, parse_mode='Markdown')
 
 async def handle_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('state') != 'upload': return
     msg = update.message
-    if not msg: return
-    
     file_obj = msg.document or msg.video or (msg.photo[-1] if msg.photo else None)
-    if not file_obj: return
-
-    f_id, f_code = file_obj.file_id, utils.gen_code()
-    f_name = getattr(file_obj, 'file_name', f"File_{f_code[:4]}")
-    f_type = 'photo' if msg.photo else ('video' if msg.video else 'document')
     
-    await db.query(
-        "INSERT INTO files (file_id, file_type, file_name, file_size, file_code, owner_id, upload_date, expiry_date) VALUES (?,?,?,?,?,?,?,?)",
-        (f_id, f_type, f_name, getattr(file_obj, 'file_size', 0), f_code, msg.from_user.id, datetime.now().isoformat(), utils.get_expiry()), 
-        commit=True
-    )
-    
-    try: await msg.delete()
-    except: pass
-
-    link = f"https://t.me/{context.bot.username}?start={f_code}"
-    await context.bot.send_message(msg.from_user.id, f"✅ *Link:* `{link}`", reply_markup=UI.back_kb(), parse_mode='Markdown')
-    context.user_data['state'] = None
+    if file_obj:
+        f_code = utils.gen_code()
+        f_name = getattr(file_obj, 'file_name', f"File_{f_code[:4]}")
+        f_type = 'photo' if msg.photo else ('video' if msg.video else 'document')
+        
+        await db.query(
+            "INSERT INTO files (file_id, file_type, file_name, file_size, file_code, owner_id, upload_date) VALUES (?,?,?,?,?,?,?)",
+            (file_obj.file_id, f_type, f_name, getattr(file_obj, 'file_size', 0), f_code, msg.from_user.id, datetime.now().isoformat()), 
+            commit=True
+        )
+        
+        link = f"https://t.me/{context.bot.username}?start={f_code}"
+        await msg.reply_text(f"✅ *File Saved!*\n\n🔗 *Link:* `{link}`", reply_markup=UI.back_kb(), parse_mode='Markdown')
+        context.user_data['state'] = None
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('state') == 'redeem':
+    state = context.user_data.get('state')
+    if state == 'redeem':
         key = update.message.text.strip()
         check = await db.query("SELECT * FROM prime_passes WHERE pass_key=? AND is_used=0", (key,), fetchone=True)
-        
-        try: await update.message.delete()
-        except: pass
-
         if check:
             await db.query("UPDATE prime_passes SET is_used=1, used_by=? WHERE pass_key=?", (update.effective_user.id, key), commit=True)
             await db.query("UPDATE users SET account_type='premium' WHERE user_id=?", (update.effective_user.id,), commit=True)
-            await update.message.reply_text("⭐ *Premium Activated!*")
+            await update.message.reply_text("⭐ *Premium Activated Successfully!*")
         else:
-            await update.message.reply_text("❌ Invalid or Used Key.")
+            await update.message.reply_text("❌ Invalid or used key.")
         context.user_data['state'] = None
 
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -160,25 +145,21 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt, kb = UI.admin_panel()
         await update.message.reply_text(txt, reply_markup=kb, parse_mode='Markdown')
 
-def main():
-    # Application setup
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    
-    # DB connection in a safe way
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(db.connect())
+async def post_init(application):
+    await db.connect()
+    print("Database Connected and Bot Initialized.")
 
-    # Handlers
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_cmd))
     app.add_handler(CallbackQueryHandler(handle_cb))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.PHOTO, handle_files))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
-    print("Bot is starting...")
-    # Render বা হোস্টিং সার্ভারে run_polling সবচেয়ে স্থিতিশীল
+    print("Bot is running...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
-                           
