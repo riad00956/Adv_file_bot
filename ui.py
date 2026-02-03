@@ -8,7 +8,7 @@ class UI:
             "👋 *Welcome to File Store Bot*\n\n"
             f"👤 *Account Type:* {status}\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "নিচের বাটনগুলো ব্যবহার করে বটটি কন্ট্রোল করুন।"
+            "নিচের বাটনগুলো ব্যবহার করে বটটি ব্যবহার করুন।"
         )
         kb = [
             [InlineKeyboardButton("📤 Upload File", callback_data="nav_upload")],
@@ -26,13 +26,11 @@ class UI:
         text = "📂 *Your Uploaded Files:*\n"
         kb = []
         if not files:
-            text += "_No files found._"
+            text += "\n_আপনি এখনো কোনো ফাইল আপলোড করেননি।_"
         else:
             for f in files:
-                text += f"\n• `{f['file_name']}`"
-                kb.append([InlineKeyboardButton(f"📄 {f['file_name'][:20]}", callback_data=f"view_{f['id']}")])
+                kb.append([InlineKeyboardButton(f"📄 {f['file_name'][:25]}", callback_data=f"view_{f['id']}")])
         
-        # Pagination
         nav = []
         if page > 0: nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"nav_myfiles_{page-1}"))
         if (page + 1) * 10 < total: nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"nav_myfiles_{page+1}"))
@@ -49,12 +47,9 @@ class UI:
             f"⚖️ *Size:* {file['file_size']}\n"
             f"👁️ *Views:* {file['views']}\n"
             f"📅 *Upload Date:* {file['upload_date'][:10]}\n\n"
-            f"🔗 *Short Link:* `{link}`"
+            f"🔗 *Share Link:* `{link}`"
         )
-        kb = [
-            [InlineKeyboardButton("🗑️ Delete File", callback_data=f"del_{file['id']}")],
-            [InlineKeyboardButton("🔙 Back", callback_data="nav_myfiles_0")]
-        ]
+        kb = [[InlineKeyboardButton("🔙 Back", callback_data="nav_myfiles_0")]]
         return text, InlineKeyboardMarkup(kb)
 
     @staticmethod
